@@ -1,185 +1,130 @@
-import tkinter as tk
-import customtkinter as ctk
-from datetime import datetime
 import pandas as pd
 import os
+import heapq
 
-class HabitTrackerApp(ctk.CTk):
-    def __init__(self):
-        super().__init__()
+# File to store habits
+FILENAME = "habits.csv"
 
-        self.title("AI Habit Tracker")
-        self.geometry("500x600")
+# Load habits from CSV file (if exists) or create a new DataFrame
+def load_habits():
+    if os.path.exists(FILENAME):
+        return pd.read_csv(FILENAME)
+    else:
+        # Create a new DataFrame if the file doesn't exist
+        return pd.DataFrame(columns=["Habit", "Goal", "Progress", "EstimatedEffort"])
 
-        # Habit data storage (starts empty)
-        self.habits = {}
+# Save habits to CSV file
+def save_habits(df):
+    df.to_csv(FILENAME, index=False)
 
-        # Set up the UI
-        self.create_widgets()
+# Habit class for use in A* search
+class Habit:
+    def __init__(self, name, goal, progress, estimated_effort):
+        self.name = name
+        self.goal = goal
+        self.progress = progress
+        self.estimated_effort = estimated_effort  # Heuristic
+    
+    def is_complete(self):
+        return self.progress >= self.goal
+    
+    def remaining_effort(self):
+        return self.goal - self.progress
+    
+    def __lt__(self, other):
+        # Comparison based on the cost (progress + heuristic)
+        return (self.progress + self.estimated_effort) < (other.progress + other.estimated_effort)
 
-        # Load habits from CSV if the file exists
-        self.load_habits_from_csv()
-
-    def create_widgets(self):
-        # Title label
-        self.label_title = ctk.CTkLabel(self, text="Habit Tracker", font=("Arial", 24))
-        self.label_title.pack(pady=10)
-
-        # Habit list UI (Initially empty, updated dynamically)
-        self.frame_habits = ctk.CTkFrame(self)
-        self.frame_habits.pack(pady=20)
-
-        # Add habit section
-        self.entry_habit_name = ctk.CTkEntry(self, placeholder_text="Habit Name")
-        self.entry_habit_name.pack(pady=10)
+# A* search algorithm to optimize habit completion
+def a_star_search(habits):
+    # Priority queue to explore habits with lowest cost + heuristic first
+    frontier = []
+    for habit in habits:
+        heapq.heappush(frontier, habit)
+    
+    while frontier:
+        current_habit = heapq.heappop(frontier)
         
-        self.entry_habit_goal = ctk.CTkEntry(self, placeholder_text="Habit Goal (e.g. 30 min, 8 glasses)")
-        self.entry_habit_goal.pack(pady=10)
-
-        self.btn_add_habit = ctk.CTkButton(self, text="Add Habit", command=self.add_habit)
-        self.btn_add_habit.pack(pady=10)
-
-        # AI recommendations area
-        self.label_recommendation = ctk.CTkLabel(self, text="AI Recommendations:", font=("Arial", 16))
-        self.label_recommendation.pack(pady=10)
+        if current_habit.is_complete():
+            print(f"Habit '{current_habit.name}' completed!")
+            continue
         
-        # Increased the size of the AI recommendations textbox
-        self.recommendation_text = ctk.CTkTextbox(self, height=150, width=350)  # Increased size
-        self.recommendation_text.pack(pady=10)
+        # Perform progress update (e.g., add effort or time)
+        progress_increase = int(input(f"How much progress for {current_habit.name}? "))
+        current_habit.progress += progress_increase
+        print(f"Updated progress for {current_habit.name}: {current_habit.progress}/{current_habit.goal}")
         
-        # Button to generate recommendations
-        self.btn_recommend = ctk.CTkButton(self, text="Generate Recommendations", command=self.generate_recommendations)
-        self.btn_recommend.pack(pady=10)
+        # Re-evaluate and add back to the frontier if not complete
+        if not current_habit.is_complete():
+            heapq.heappush(frontier, current_habit)
 
-    def add_habit(self):
-        habit_name = self.entry_habit_name.get().strip()
-        habit_goal = self.entry_habit_goal.get().strip()
+# Convert a DataFrame row into a Habit object
+def df_to_habits(df):
+    habits = []
+    for _, row in df.iterrows():
+        habits.append(Habit(row["Habit"], row["Goal"], row["Progress"], row["EstimatedEffort"]))
+    return habits
 
-        if habit_name and habit_goal:
-            # Add new habit to the dictionary
-            if habit_name not in self.habits:
-                self.habits[habit_name] = {
-                    'goal': habit_goal,
-                    'current': 0,
-                    'last_checked': None
-                }
-                # Add a new button for the habit
-                self.create_habit_button(habit_name, habit_goal)
-                # Clear input fields
-                self.entry_habit_name.delete(0, tk.END)
-                self.entry_habit_goal.delete(0, tk.END)
-                
-                # Save habits to CSV after adding
-                self.save_habits_to_csv()
-            else:
-                self.show_warning("Habit already exists!")
+# Add a new habit
+def add_habit(df):
+    habit_name = input("Enter the name of the habit: ")
+    goal = int(input(f"Enter the goal for {habit_name} (e.g., number of times per week): "))
+    estimated_effort = int(input(f"Estimate the effort needed to complete {habit_name} (e.g., difficulty level from 1-10): "))
+    progress = 0  # Start with zero progress
+    new_habit = pd.DataFrame({"Habit": [habit_name], "Goal": [goal], "Progress": [progress], "EstimatedEffort": [estimated_effort]})
+    df = pd.concat([df, new_habit], ignore_index=True)
+    save_habits(df)
+    print(f"Habit '{habit_name}' added with a goal of {goal} and estimated effort of {estimated_effort}.")
+    return df
+
+# View all habits
+def view_habits(df):
+    if df.empty:
+        print("No habits found. Add a new habit to get started.")
+    else:
+        print(df)
+
+# Mark progress for a habit
+def update_progress(df):
+    habit_name = input("Enter the name of the habit to update progress: ")
+    if habit_name in df['Habit'].values:
+        progress_increase = int(input(f"How much progress do you want to add to '{habit_name}'? "))
+        df.loc[df['Habit'] == habit_name, 'Progress'] += progress_increase
+        save_habits(df)
+        print(f"Progress updated for '{habit_name}'.")
+    else:
+        print(f"Habit '{habit_name}' not found.")
+    return df
+
+# Main menu
+def menu():
+    df = load_habits()
+    while True:
+        print("\n--- Habit Tracker ---")
+        print("1. View habits")
+        print("2. Add a new habit")
+        print("3. Update progress")
+        print("4. Optimize habits using A* search")
+        print("5. Exit")
+        
+        choice = input("Enter your choice (1-5): ")
+        
+        if choice == '1':
+            view_habits(df)
+        elif choice == '2':
+            df = add_habit(df)
+        elif choice == '3':
+            df = update_progress(df)
+        elif choice == '4':
+            # Run A* search on habits
+            habits = df_to_habits(df)
+            a_star_search(habits)
+        elif choice == '5':
+            print("Exiting the habit tracker. Goodbye!")
+            break
         else:
-            self.show_warning("Please provide a valid habit name and goal.")
+            print("Invalid choice. Please try again.")
 
-    def create_habit_button(self, habit_name, habit_goal):
-        """ Create a button for the new habit with an additional 'Goal Achieved' button. """
-        button_frame = ctk.CTkFrame(self.frame_habits)
-        button_frame.pack(pady=5, fill=tk.X)
-
-        habit_button = ctk.CTkButton(button_frame, text=f"{habit_name} (Goal: {habit_goal})",
-                                      command=lambda habit=habit_name: self.update_habit(habit))
-        habit_button.pack(side=tk.LEFT, padx=5)
-
-        goal_button = ctk.CTkButton(button_frame, text="Goal Achieved", 
-                                     command=lambda habit=habit_name: self.mark_goal_achieved(habit))
-        goal_button.pack(side=tk.LEFT, padx=5)
-
-    def update_habit(self, habit):
-        """ Increment the habit count and update the time. """
-        current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        self.habits[habit]['current'] += 1
-        self.habits[habit]['last_checked'] = current_time
-        
-        # After updating the habit, refresh recommendations
-        self.generate_recommendations()
-        
-        # Save habits to CSV after updating
-        self.save_habits_to_csv()
-
-    def mark_goal_achieved(self, habit):
-        """ Mark the habit as completed by setting the current progress to the goal. """
-        goal = int(self.habits[habit]['goal'])
-        self.habits[habit]['current'] = goal
-        self.habits[habit]['last_checked'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        
-        # After marking the goal, refresh recommendations
-        self.generate_recommendations()
-        
-        # Save habits to CSV after marking goal as achieved
-        self.save_habits_to_csv()
-
-    def generate_recommendations(self):
-        """ Generate AI recommendations based on habit progress. """
-        recommendations = []
-
-        for habit, data in self.habits.items():
-            goal = int(data['goal'])
-            current = data['current']
-            
-            if current < goal:
-                remaining = goal - current
-                recommendations.append(f"Focus on '{habit}'! You need {remaining} more units to reach your goal.")
-            else:
-                recommendations.append(f"Great job on '{habit}'! You've reached your goal.")
-        
-        # Display the recommendations
-        self.recommendation_text.delete(1.0, tk.END)
-        self.recommendation_text.insert(tk.END, "\n".join(recommendations))
-
-    def save_habits_to_csv(self):
-        """ Save the habits to a CSV file using pandas. """
-        # Convert the habits dictionary to a pandas DataFrame
-        habit_data = {
-            'habit_name': [],
-            'goal': [],
-            'current': [],
-            'last_checked': []
-        }
-        
-        for habit, data in self.habits.items():
-            habit_data['habit_name'].append(habit)
-            habit_data['goal'].append(data['goal'])
-            habit_data['current'].append(data['current'])
-            habit_data['last_checked'].append(data['last_checked'])
-        
-        # Convert the dictionary to a DataFrame
-        df = pd.DataFrame(habit_data)
-
-        # Save DataFrame to a CSV file
-        df.to_csv("habits.csv", index=False)
-
-    def load_habits_from_csv(self):
-        """ Load habits from a CSV file if it exists. """
-        if os.path.exists("habits.csv"):
-            df = pd.read_csv("habits.csv")
-            for index, row in df.iterrows():
-                habit_name = row['habit_name']
-                habit_goal = row['goal']
-                habit_current = row['current']
-                habit_last_checked = row['last_checked']
-                self.habits[habit_name] = {
-                    'goal': habit_goal,
-                    'current': habit_current,
-                    'last_checked': habit_last_checked if pd.notna(habit_last_checked) else None
-                }
-                # Re-create buttons for existing habits
-                self.create_habit_button(habit_name, habit_goal)
-
-    def show_warning(self, message):
-        """ Display a simple warning message. """
-        warning_popup = ctk.CTkToplevel(self)
-        warning_popup.title("Warning")
-        label = ctk.CTkLabel(warning_popup, text=message, fg_color="red", font=("Arial", 16))
-        label.pack(pady=20)
-        btn_close = ctk.CTkButton(warning_popup, text="Close", command=warning_popup.destroy)
-        btn_close.pack(pady=10)
-
-# Run the application
+# Run the habit tracker
 if __name__ == "__main__":
-    app = HabitTrackerApp()
-    app.mainloop()
+    menu()
