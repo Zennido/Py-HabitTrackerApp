@@ -1,7 +1,6 @@
 import streamlit as st
 import pandas as pd
 import random
-from sklearn.linear_model import LinearRegression
 
 # File to store habits
 csv_file = 'habits.csv'
@@ -76,68 +75,42 @@ def mark_complete(habit):
     df.loc[df['Habit'] == habit, 'Completed'] = True
     save_habits(df)
 
-# Delete a habit
-def delete_habit(habit):
-    df = load_habits()
-    df = df[df['Habit'] != habit]  # Remove the habit from the DataFrame
-    save_habits(df)
-
 # Get motivational responses based on category
 def get_motivational_response(category):
+    # If category exists in the dictionary, fetch the list of responses
     if category in motivational_responses:
         return random.choice(motivational_responses[category])
     else:
         return "Stay strong, you're doing great!"
 
-# Predict the goal for a habit based on previous data (Linear Regression)
-def predict_goal_for_habit(habit_category):
+# Recommendation system to suggest habits based on categories
+def recommend_habits(user_category):
     df = load_habits()
-
-    if df.empty:
-        return 1.0  # Default goal if no data available
-
-    # Convert categories to numerical format
-    category_mapping = {cat: idx for idx, cat in enumerate(df['Category'].unique())}
-    df['Category_num'] = df['Category'].map(category_mapping)
-
-    X = df[['Category_num']]  # Category as feature
-    y = df['Goal (hours)']  # Goal as target
-
-    # Train the Linear Regression model
-    model = LinearRegression()
-    model.fit(X, y)
-
-    # Predict the goal for the given category
-    habit_category_num = category_mapping.get(habit_category, -1)
-    if habit_category_num == -1:
-        return 1.0  # Default if category is not found
-
-    predicted_goal = model.predict([[habit_category_num]])
-    return predicted_goal[0]
+    # Filter habits by the same category
+    recommended_habits = df[df['Category'] == user_category]
+    # If there are no habits in the selected category, recommend habits from similar categories
+    if recommended_habits.empty:
+        similar_categories = [cat for cat in motivational_responses.keys() if cat != user_category]
+        recommended_habits = df[df['Category'].isin(similar_categories)]
+    return recommended_habits[['Habit', 'Category']]
 
 # Load the habits at the beginning so that it is available for both pages and sidebar
 df = load_habits()
 
 # Navigation in sidebar
 st.sidebar.title("Navigation")
-page = st.sidebar.selectbox("Go to", ["Habit Tracker", "View Habits"])
+page = st.sidebar.selectbox("Go to", ["Habit Tracker", "View Habits", "Habit Recommendations"])
 
 # Habit categories
 categories = ['Home', 'Sports', 'Study', 'Work', 'Hobby', 'Other']
 
 if page == "Habit Tracker":
-    # Input section for adding a new habit with goal prediction
+    # Input section for adding a new habit with goal
     st.title("Habit Tracker")
     st.header("Add a New Habit")
     habit_name = st.text_input("Habit Name")
     habit_category = st.selectbox("Habit Category", categories)
-    
-    if habit_category:
-        # Predict a goal for the selected category
-        predicted_goal = predict_goal_for_habit(habit_category)
-        st.write(f"Suggested Goal: {predicted_goal:.2f} hours")
-    
-    habit_goal = st.number_input("Goal (hours)", min_value=0.0, step=0.5, value=predicted_goal)
+    habit_goal = st.number_input("Goal (hours)", min_value=0.0, step=0.5)
     
     if st.button("Add Habit"):
         if habit_name and habit_goal > 0:
@@ -147,25 +120,36 @@ if page == "Habit Tracker":
             st.error("Please enter a valid habit name and goal (hours).")
 
 elif page == "View Habits":
-    # Page to view and mark habits as complete and delete
+    # Page to view and mark habits as complete
     st.title("View Your Habits")
     
     if not df.empty:
         for index, row in df.iterrows():
-            col1, col2, col3, col4, col5 = st.columns([3, 2, 2, 1, 1])
+            col1, col2, col3, col4 = st.columns([3, 2, 2, 1])
             col1.write(f"{row['Habit']} ({row['Category']}) - Goal: {row['Goal (hours)']} hours")
             if col2.button("Mark as Complete", key=f"complete_{index}"):
                 mark_complete(row['Habit'])
-                st.rerun()  # Refresh the page after marking complete
+                st.rerun()  # Replaced st.experimental_rerun() with st.rerun()
             if row['Completed']:
                 col3.write("✅ Completed")
             else:
                 col3.write("❌ Not Completed")
-            if col4.button("Delete", key=f"delete_{index}"):
-                delete_habit(row['Habit'])
-                st.rerun()  # Refresh the page after deletion
     else:
         st.write("No habits added yet.")
+
+elif page == "Habit Recommendations":
+    # Page to recommend habits based on categories
+    st.title("Habit Recommendations")
+    selected_category = st.selectbox("Select a Category", categories)
+    
+    if st.button("Get Recommendations"):
+        recommendations = recommend_habits(selected_category)
+        if not recommendations.empty:
+            st.write("Here are some habit suggestions for you:")
+            for _, row in recommendations.iterrows():
+                st.write(f"- {row['Habit']} ({row['Category']})")
+        else:
+            st.write("No recommendations available. Try adding some habits first.")
 
 # Section for motivational response in the sidebar
 st.sidebar.header("Need Motivation?")
